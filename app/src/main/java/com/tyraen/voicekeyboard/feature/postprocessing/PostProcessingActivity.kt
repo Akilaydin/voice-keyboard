@@ -9,6 +9,7 @@ import android.view.View
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.isVisible
+import androidx.core.widget.doAfterTextChanged
 import com.tyraen.voicekeyboard.R
 import com.tyraen.voicekeyboard.app.ServiceLocator
 import com.tyraen.voicekeyboard.core.config.PostProcessingPreferences
@@ -110,6 +111,7 @@ class PostProcessingActivity : AppCompatActivity() {
                 val provider = providers[position]
                 editEndpoint.hint = PostProcessingPreferences.defaultEndpoint(provider)
                 editModel.hint = PostProcessingPreferences.defaultModel(provider)
+                updateTranslateModelHint()
             }
             override fun onNothingSelected(parent: AdapterView<*>?) {}
         }
@@ -117,7 +119,8 @@ class PostProcessingActivity : AppCompatActivity() {
 
     /**
      * "Custom" plus the known providers. Picking one sets the dialect, address and a model that
-     * exists there; editing the address by hand moves the spinner to whatever matches, or "Custom".
+     * exists there, and resets translation/rhyme to that provider's default. Editing the address
+     * by hand only moves the spinner to whatever matches, or "Custom".
      */
     private fun setupPresetSpinner() {
         val labels = listOf(getString(R.string.preset_custom)) + ProviderPresets.postProcessing.map { it.name }
@@ -136,6 +139,8 @@ class PostProcessingActivity : AppCompatActivity() {
                 preset.provider?.let { spinnerProvider.setSelection(providers.indexOf(it)) }
                 editEndpoint.setText(preset.endpoint)
                 editModel.setText(preset.model)
+                editTranslateModel.setText("")
+                updateTranslateModelHint()
             }
             override fun onNothingSelected(parent: AdapterView<*>?) {}
         }
@@ -150,8 +155,21 @@ class PostProcessingActivity : AppCompatActivity() {
                     presetPosSetByCode = pos
                     spinnerLlmPreset.setSelection(pos, false)
                 }
+                updateTranslateModelHint()
             }
         })
+    }
+
+    private fun updateTranslateModelHint() {
+        val selectedProvider = providers.getOrNull(spinnerProvider.selectedItemPosition) ?: return
+        val endpoint = editEndpoint.text.toString().trim()
+        // Apply follows a recognized address even when the dialect spinner still differs.
+        val provider = PostProcessingPreferences.providerFor(endpoint) ?: selectedProvider
+        editTranslateModel.hint = PostProcessingPreferences(
+            provider = provider,
+            endpoint = endpoint,
+            model = editModel.text.toString().trim()
+        ).resolvedTranslateModel()
     }
 
     private fun setupTranslateLangSpinner() {
@@ -164,6 +182,7 @@ class PostProcessingActivity : AppCompatActivity() {
 
     private fun setupActions() {
         btnApply.setOnClickListener { saveAndValidate() }
+        editModel.doAfterTextChanged { updateTranslateModelHint() }
 
         switchEnabled.setOnCheckedChangeListener { _, isChecked ->
             scope.launch {
@@ -199,7 +218,7 @@ class PostProcessingActivity : AppCompatActivity() {
 
             spinnerTranslateLang.setSelection(TranscriptionLocale.positionOf(pp.translateLang))
             editTranslateModel.setText(pp.translateModel)
-            editTranslateModel.hint = PostProcessingPreferences.defaultTranslateModel(pp.provider)
+            updateTranslateModelHint()
         }
     }
 
