@@ -8,7 +8,6 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okio.ByteString.Companion.toByteString
 import org.json.JSONArray
-import org.json.JSONException
 import org.json.JSONObject
 import java.io.File
 import java.io.IOException
@@ -49,17 +48,33 @@ class ChatCompletionsSpeechClient(private val http: OkHttpClient) : SpeechToText
         }
 
         internal fun responseText(body: String): String {
-            val content = JSONObject(body).getJSONArray("choices").getJSONObject(0)
-                .getJSONObject("message").get("content")
+            val choice = JSONObject(body).getJSONArray("choices").getJSONObject(0)
+            val finishReason = choice.optString("finish_reason")
+            if (finishReason != "stop") {
+                throw IOException("Chat transcription did not finish (finish_reason=${finishReason.ifBlank { "missing" }})")
+            }
+            val message = choice.getJSONObject("message")
+            if ((message.opt("refusal") as? String)?.isNotBlank() == true) {
+                throw IOException("Chat transcription was refused")
+            }
+            val content = message.get("content")
             return when (content) {
                 is String -> content.trim()
                 is JSONArray -> buildString {
+                    var hasText = false
                     for (i in 0 until content.length()) {
                         val part = content.optJSONObject(i)
-                        if (part?.optString("type") == "text") append(part.optString("text"))
+                        if (part?.optString("type") == "refusal") throw IOException("Chat transcription was refused")
+                        if (part?.optString("type") == "text") {
+                            val text = part.opt("text") as? String
+                                ?: throw IOException("Chat transcription has no text")
+                            append(text)
+                            hasText = true
+                        }
                     }
+                    if (!hasText) throw IOException("Chat transcription has no text")
                 }.trim()
-                else -> throw JSONException("Chat response has no transcript text")
+                else -> throw IOException("Chat transcription has no text")
             }
         }
     }
@@ -69,7 +84,7 @@ class ChatCompletionsSpeechClient(private val http: OkHttpClient) : SpeechToText
             runCatching {
                 require(apiKey.isNotBlank()) { "API key is empty" }
                 post(SilentWavGenerator.generate(), "wav", TranscriptionConfig(apiKey, endpoint, model, "", ""))
-                "API key is valid"
+                "WAV probe passed. Use Test Recording below to check OGG/Opus or M4A/AAC support."
             }
         }
 
